@@ -88,6 +88,77 @@ func TestServer_ListProducts(t *testing.T) {
 	}
 }
 
+func TestServer_HealthEndpoint(t *testing.T) {
+	t.Parallel()
+
+	h, _ := testHandler(t, fakeCouponValidator{}, &fakeOrderStore{})
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var resp healthResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("health status = %q, want ok", resp.Status)
+	}
+}
+
+func TestServer_SwaggerDisabledByDefault(t *testing.T) {
+	t.Parallel()
+
+	h, _ := testHandler(t, fakeCouponValidator{}, &fakeOrderStore{})
+	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestServer_SwaggerEnabledNonProd(t *testing.T) {
+	t.Parallel()
+
+	cat := testCatalog(t)
+	server := New(Config{
+		Catalog:         cat,
+		CouponValidator: fakeCouponValidator{},
+		OrderStore:      &fakeOrderStore{},
+		APIKey:          "apitest",
+		DeviceHeader:    "X-Device-ID",
+		Environment:     "development",
+		EnableSwagger:   true,
+		OpenAPISpec:     []byte("openapi: 3.1.0\ninfo:\n  title: Test\n  version: 1.0.0\n"),
+	})
+	h := server.Handler()
+
+	reqSpec := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+	recSpec := httptest.NewRecorder()
+	h.ServeHTTP(recSpec, reqSpec)
+	if recSpec.Code != http.StatusOK {
+		t.Fatalf("openapi status = %d, want %d", recSpec.Code, http.StatusOK)
+	}
+	if got := recSpec.Body.String(); got == "" || !bytes.Contains([]byte(got), []byte("openapi:")) {
+		t.Fatalf("expected openapi payload, got %q", got)
+	}
+
+	reqUI := httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil)
+	recUI := httptest.NewRecorder()
+	h.ServeHTTP(recUI, reqUI)
+	if recUI.Code != http.StatusOK {
+		t.Fatalf("swagger status = %d, want %d", recUI.Code, http.StatusOK)
+	}
+	if got := recUI.Body.String(); !bytes.Contains([]byte(got), []byte("SwaggerUIBundle")) {
+		t.Fatalf("expected swagger html bundle, got %q", got)
+	}
+}
+
 func TestServer_GetProduct(t *testing.T) {
 	t.Parallel()
 

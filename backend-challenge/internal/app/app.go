@@ -21,6 +21,9 @@ import (
 type Config struct {
 	Address                   string
 	ProductsFile              string
+	Environment               string
+	EnableSwagger             bool
+	OpenAPIFile               string
 	MySQLDSN                  string
 	MySQLMaxOpenConns         int
 	MySQLMaxIdleConns         int
@@ -60,6 +63,16 @@ func ConfigFromEnv() Config {
 	if productsFile == "" {
 		productsFile = "data/products.json"
 	}
+	environment := strings.TrimSpace(os.Getenv("APP_ENV"))
+	if environment == "" {
+		environment = "development"
+	}
+	isProd := strings.EqualFold(environment, "prod") || strings.EqualFold(environment, "production")
+	enableSwagger := parseBoolOrDefault(os.Getenv("ENABLE_SWAGGER"), !isProd)
+	openAPIFile := strings.TrimSpace(os.Getenv("OPENAPI_FILE"))
+	if openAPIFile == "" {
+		openAPIFile = filepath.Join("data", "openapi.yaml")
+	}
 
 	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
 	if apiKey == "" {
@@ -83,6 +96,9 @@ func ConfigFromEnv() Config {
 	return Config{
 		Address:                   address,
 		ProductsFile:              productsFile,
+		Environment:               environment,
+		EnableSwagger:             enableSwagger,
+		OpenAPIFile:               openAPIFile,
 		MySQLDSN:                  mysqlDSN,
 		MySQLMaxOpenConns:         parseIntOrDefault(os.Getenv("MYSQL_MAX_OPEN_CONNS"), 100),
 		MySQLMaxIdleConns:         parseIntOrDefault(os.Getenv("MYSQL_MAX_IDLE_CONNS"), 25),
@@ -125,12 +141,25 @@ func BuildRuntime(cfg Config) (*Runtime, error) {
 	}
 	orderCloser := io.Closer(orderStore)
 
+	var openAPISpec []byte
+	if cfg.EnableSwagger {
+		openAPISpec, err = os.ReadFile(cfg.OpenAPIFile)
+		if err != nil {
+			_ = closer.Close()
+			_ = orderCloser.Close()
+			return nil, fmt.Errorf("read openapi file: %w", err)
+		}
+	}
+
 	srv := httpapi.New(httpapi.Config{
 		Catalog:         cat,
 		CouponValidator: validator,
 		OrderStore:      orderStore,
 		APIKey:          cfg.APIKey,
 		DeviceHeader:    cfg.DeviceIDHeader,
+		Environment:     cfg.Environment,
+		EnableSwagger:   cfg.EnableSwagger,
+		OpenAPISpec:     openAPISpec,
 		RateLimit: httpapi.RateLimitConfig{
 			RequestsPerSecond: cfg.RateLimitRPS,
 			Burst:             cfg.RateLimitBurst,
@@ -272,6 +301,20 @@ func parseFloatOrDefault(raw string, fallback float64) float64 {
 
 	value, err := strconv.ParseFloat(raw, 64)
 	if err != nil || value < 0 {
+		return fallback
+	}
+
+	return value
+}
+
+func parseBoolOrDefault(raw string, fallback bool) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fallback
+	}
+
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
 		return fallback
 	}
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/oolio-group/kart-challenge/backend-challenge/internal/catalog"
 	"github.com/oolio-group/kart-challenge/backend-challenge/internal/coupon"
@@ -23,6 +24,9 @@ type Config struct {
 	OrderStore      order.Store
 	APIKey          string
 	DeviceHeader    string
+	Environment     string
+	EnableSwagger   bool
+	OpenAPISpec     []byte
 	RateLimit       RateLimitConfig
 }
 
@@ -35,6 +39,10 @@ type Server struct {
 	rateLimiter     *UserRateLimiter
 	rateLimitHeader string
 	deviceHeader    string
+	environment     string
+	enableSwagger   bool
+	openAPISpec     []byte
+	startedAt       time.Time
 }
 
 // New constructs an API server.
@@ -52,6 +60,11 @@ func New(cfg Config) *Server {
 	if deviceHeader == "" {
 		deviceHeader = defaultDeviceIDHeader
 	}
+	environment := strings.TrimSpace(cfg.Environment)
+	if environment == "" {
+		environment = "development"
+	}
+	enableSwagger := cfg.EnableSwagger && len(cfg.OpenAPISpec) > 0
 
 	return &Server{
 		catalog:         cfg.Catalog,
@@ -61,18 +74,22 @@ func New(cfg Config) *Server {
 		rateLimiter:     rateLimiter,
 		rateLimitHeader: rateLimitHeader,
 		deviceHeader:    deviceHeader,
+		environment:     environment,
+		enableSwagger:   enableSwagger,
+		openAPISpec:     append([]byte(nil), cfg.OpenAPISpec...),
+		startedAt:       time.Now().UTC(),
 	}
 }
 
 // Handler returns the configured HTTP handler.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
+	secureMux := http.NewServeMux()
 
-	mux.HandleFunc("GET /product", s.handleListProducts)
-	mux.HandleFunc("GET /product/{productId}", s.handleGetProduct)
-	mux.HandleFunc("POST /order", s.handlePlaceOrder)
+	secureMux.HandleFunc("GET /product", s.handleListProducts)
+	secureMux.HandleFunc("GET /product/{productId}", s.handleGetProduct)
+	secureMux.HandleFunc("POST /order", s.handlePlaceOrder)
 
-	secured := withAuthAndRateLimit(mux, AuthAndRateLimitConfig{
+	secured := withAuthAndRateLimit(secureMux, AuthAndRateLimitConfig{
 		APIKey:        s.apiKey,
 		UserHeader:    s.rateLimitHeader,
 		DeviceHeader:  s.deviceHeader,
@@ -82,12 +99,31 @@ func (s *Server) Handler() http.Handler {
 		BurstCapacity: s.rateLimiter.BurstCapacity(),
 	})
 
-	logged := withRequestLogging(secured, RequestLoggingConfig{
+	rootMux := http.NewServeMux()
+	rootMux.HandleFunc("GET /health", s.handleHealth)
+	rootMux.Handle("GET /product", secured)
+	rootMux.Handle("GET /product/{productId}", secured)
+	rootMux.Handle("POST /order", secured)
+
+	if s.enableSwagger {
+		rootMux.HandleFunc("GET /openapi.yaml", s.handleOpenAPIYAML)
+		rootMux.HandleFunc("GET /swagger", s.handleSwaggerRoot)
+		rootMux.HandleFunc("GET /swagger/", s.handleSwaggerUI)
+	}
+
+	logged := withRequestLogging(rootMux, RequestLoggingConfig{
 		UserHeader:   s.rateLimitHeader,
 		DeviceHeader: s.deviceHeader,
 	})
 
 	return withCORS(logged, s.deviceHeader)
+}
+
+type healthResp struct {
+	Status      string `json:"status"`
+	Environment string `json:"environment"`
+	UptimeSec   int64  `json:"uptimeSec"`
+	Time        string `json:"time"`
 }
 
 type orderReq struct {
@@ -239,6 +275,73 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, healthResp{
+		Status:      "ok",
+		Environment: s.environment,
+		UptimeSec:   int64(time.Since(s.startedAt).Seconds()),
+		Time:        time.Now().UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handleOpenAPIYAML(w http.ResponseWriter, _ *http.Request) {
+	if !s.enableSwagger || len(s.openAPISpec) == 0 {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(s.openAPISpec)
+}
+
+func (s *Server) handleSwaggerRoot(w http.ResponseWriter, r *http.Request) {
+	if !s.enableSwagger {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	http.Redirect(w, r, "/swagger/index.html", http.StatusTemporaryRedirect)
+}
+
+func (s *Server) handleSwaggerUI(w http.ResponseWriter, r *http.Request) {
+	if !s.enableSwagger {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	if r.URL.Path != "/swagger/" && r.URL.Path != "/swagger/index.html" {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	const swaggerHTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Food Ordering API - Swagger</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.onload = function() {
+        window.ui = SwaggerUIBundle({
+          url: '/openapi.yaml',
+          dom_id: '#swagger-ui'
+        });
+      };
+    </script>
+  </body>
+</html>`
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(swaggerHTML))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

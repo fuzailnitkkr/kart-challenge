@@ -8,6 +8,8 @@ This service implements the OpenAPI-backed food ordering API in Go with:
 
 - Product catalog read APIs
 - Order placement API
+- Health API
+- Swagger/OpenAPI endpoints (non-prod mode)
 - Global API key auth middleware
 - Per-user rate limiting middleware
 - Request logging middleware
@@ -42,6 +44,9 @@ All config is loaded in `internal/app/app.go` via `ConfigFromEnv()`.
 
 - `PORT` (default `8080`)
 - `PRODUCTS_FILE` (default `data/products.json`)
+- `APP_ENV` (default `development`)
+- `ENABLE_SWAGGER` (default: enabled when not production)
+- `OPENAPI_FILE` (default `data/openapi.yaml`)
 - `API_KEY` (default `apitest`)
 - `DEVICE_ID_HEADER` (default `X-Device-ID`)
 - `RATE_LIMIT_RPS` (default `20`)
@@ -81,7 +86,7 @@ Global middleware sets:
 
 Auth middleware:
 
-- Applied to all API endpoints before business handlers
+- Applied to business endpoints (`/product`, `/product/{productId}`, `/order`)
 - Reads `api_key` header
 - Missing `api_key` -> `401 Unauthorized`
 - Wrong `api_key` -> `403 Forbidden`
@@ -100,14 +105,26 @@ Request logging:
 
 - Logs every API request with method, path, status, bytes, duration, `ip`, `device_id`, and `user_id`
 
-### 4.3 GET /product
+### 4.3 GET /health
+
+- Public liveness endpoint (no auth or device-id requirement)
+- Returns `200 OK` with: status, environment, uptime seconds, and UTC timestamp
+
+### 4.4 Swagger Endpoints (non-prod only)
+
+- `GET /openapi.yaml`: serves loaded OpenAPI spec
+- `GET /swagger`: redirects to `/swagger/index.html`
+- `GET /swagger/index.html`: serves Swagger UI (CDN-based)
+- Enabled only when Swagger is configured on (`ENABLE_SWAGGER`)
+
+### 4.5 GET /product
 
 - Returns full product list from in-memory catalog
 - Response: `200 OK` JSON
 - Adds cache header:
   - `Cache-Control: public, max-age=30, s-maxage=300, stale-while-revalidate=120`
 
-### 4.4 GET /product/{productId}
+### 4.6 GET /product/{productId}
 
 - Validates path param as positive integer
 - Invalid ID format/value -> `400 Bad Request`
@@ -115,7 +132,7 @@ Request logging:
 - Success -> `200 OK` JSON product
 - Adds same cache header as list endpoint
 
-### 4.5 POST /order
+### 4.7 POST /order
 
 Payload rules:
 
