@@ -100,6 +100,12 @@ components:
         id:
           type: string
           examples: ["0000-0000-0000-0000"]
+        total:
+          type: number
+          examples: [90.0]
+        discounts:
+          type: number
+          examples: [10.0]
         items:
           type: array
           items:
@@ -122,6 +128,7 @@ components:
         couponCode:
           type: string
           description: Optional promo code applied to the order
+          examples: ["HAPPYHRS"]
         items:
           type: array
           items:
@@ -151,9 +158,25 @@ components:
           type: number
           format: float
           description: Selling price
+          examples: [13.3]
         category:
           type: string
           examples: [Waffle]
+        image:
+          type: object
+          properties:
+            thumbnail:
+              type: string
+              examples: ["https://orderfoodonline.deno.dev/public/images/image-waffle-thumbnail.jpg"]
+            mobile:
+              type: string
+              examples: ["https://orderfoodonline.deno.dev/public/images/image-waffle-mobile.jpg"]
+            tablet:
+              type: string
+              examples: ["https://orderfoodonline.deno.dev/public/images/image-waffle-tablet.jpg"]
+            desktop:
+              type: string
+              examples: ["https://orderfoodonline.deno.dev/public/images/image-waffle-desktop.jpg"]
     ApiResponse:
       type: object
       properties:

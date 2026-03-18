@@ -1,0 +1,10 @@
+.git
+.gitignore
+*.swp
+*.swo
+*.tmp
+
+CURRENT_IMPLEMENTATION.md
+README.md
+
+testdata

@@ -36,6 +36,8 @@ Choose any language or framework of your choice. For example our top pick for ba
 > The API immplementation example available to you at orderfoodonline.deno.dev/api is simplified and doesn't handle some edge cases intentionally.
 > Use your best judgement to build a Robust API server.
 
+**Checkout our [advanced backend challenge](./backend-challenge/README.md) for extra bonus points
+
 ## Design
 
 You can find a [Figma](https://figma.com) design file `design.fig` that you can use.
