@@ -1,0 +1,28 @@
+name: Backend Docker Build
+
+on:
+  pull_request:
+    paths:
+      - 'backend-challenge/**'
+      - '.github/workflows/backend-docker.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend-challenge/**'
+      - '.github/workflows/backend-docker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t orderfood-api:ci ./backend-challenge

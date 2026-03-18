@@ -1,0 +1,51 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - 'backend-challenge/**'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/backend-docker.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'backend-challenge/**'
+      - '.github/workflows/backend-ci.yml'
+      - '.github/workflows/backend-docker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  go-ci:
+    name: Go Lint and Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend-challenge
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend-challenge/go.mod
+          cache-dependency-path: backend-challenge/go.sum
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Found unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
