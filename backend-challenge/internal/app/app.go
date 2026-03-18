@@ -27,6 +27,7 @@ type Config struct {
 	MySQLConnMaxLifetime      time.Duration
 	MySQLConnMaxIdleTime      time.Duration
 	APIKey                    string
+	DeviceIDHeader            string
 	RateLimitRPS              float64
 	RateLimitBurst            int
 	RateLimitUserHeader       string
@@ -64,6 +65,10 @@ func ConfigFromEnv() Config {
 	if apiKey == "" {
 		apiKey = "apitest"
 	}
+	deviceIDHeader := strings.TrimSpace(os.Getenv("DEVICE_ID_HEADER"))
+	if deviceIDHeader == "" {
+		deviceIDHeader = "X-Device-ID"
+	}
 
 	rateLimitUserHeader := strings.TrimSpace(os.Getenv("RATE_LIMIT_USER_HEADER"))
 	if rateLimitUserHeader == "" {
@@ -84,6 +89,7 @@ func ConfigFromEnv() Config {
 		MySQLConnMaxLifetime:      parseDurationOrDefault(os.Getenv("MYSQL_CONN_MAX_LIFETIME"), 5*time.Minute),
 		MySQLConnMaxIdleTime:      parseDurationOrDefault(os.Getenv("MYSQL_CONN_MAX_IDLE_TIME"), 2*time.Minute),
 		APIKey:                    apiKey,
+		DeviceIDHeader:            deviceIDHeader,
 		RateLimitRPS:              parseFloatOrDefault(os.Getenv("RATE_LIMIT_RPS"), 20),
 		RateLimitBurst:            parseIntOrDefault(os.Getenv("RATE_LIMIT_BURST"), 40),
 		RateLimitUserHeader:       rateLimitUserHeader,
@@ -124,6 +130,7 @@ func BuildRuntime(cfg Config) (*Runtime, error) {
 		CouponValidator: validator,
 		OrderStore:      orderStore,
 		APIKey:          cfg.APIKey,
+		DeviceHeader:    cfg.DeviceIDHeader,
 		RateLimit: httpapi.RateLimitConfig{
 			RequestsPerSecond: cfg.RateLimitRPS,
 			Burst:             cfg.RateLimitBurst,

@@ -22,6 +22,7 @@ type Config struct {
 	CouponValidator coupon.Validator
 	OrderStore      order.Store
 	APIKey          string
+	DeviceHeader    string
 	RateLimit       RateLimitConfig
 }
 
@@ -33,6 +34,7 @@ type Server struct {
 	apiKey          string
 	rateLimiter     *UserRateLimiter
 	rateLimitHeader string
+	deviceHeader    string
 }
 
 // New constructs an API server.
@@ -46,6 +48,10 @@ func New(cfg Config) *Server {
 	if rateLimitHeader == "" {
 		rateLimitHeader = defaultRateLimitUserHeader
 	}
+	deviceHeader := strings.TrimSpace(cfg.DeviceHeader)
+	if deviceHeader == "" {
+		deviceHeader = defaultDeviceIDHeader
+	}
 
 	return &Server{
 		catalog:         cfg.Catalog,
@@ -54,6 +60,7 @@ func New(cfg Config) *Server {
 		apiKey:          cfg.APIKey,
 		rateLimiter:     rateLimiter,
 		rateLimitHeader: rateLimitHeader,
+		deviceHeader:    deviceHeader,
 	}
 }
 
@@ -68,12 +75,19 @@ func (s *Server) Handler() http.Handler {
 	secured := withAuthAndRateLimit(mux, AuthAndRateLimitConfig{
 		APIKey:        s.apiKey,
 		UserHeader:    s.rateLimitHeader,
+		DeviceHeader:  s.deviceHeader,
+		RequireDevice: true,
 		RateLimiter:   s.rateLimiter,
 		LimitPerSec:   s.rateLimiter.LimitPerSecond(),
 		BurstCapacity: s.rateLimiter.BurstCapacity(),
 	})
 
-	return withCORS(secured)
+	logged := withRequestLogging(secured, RequestLoggingConfig{
+		UserHeader:   s.rateLimitHeader,
+		DeviceHeader: s.deviceHeader,
+	})
+
+	return withCORS(logged, s.deviceHeader)
 }
 
 type orderReq struct {
@@ -233,10 +247,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func withCORS(next http.Handler) http.Handler {
+func withCORS(next http.Handler, deviceHeader string) http.Handler {
+	deviceHeader = strings.TrimSpace(deviceHeader)
+	if deviceHeader == "" {
+		deviceHeader = defaultDeviceIDHeader
+	}
+
+	allowedHeaders := "Content-Type, api_key, Idempotency-Key, X-User-ID, X-Device-ID, X-Forwarded-For, X-Real-IP"
+	if !strings.EqualFold(deviceHeader, defaultDeviceIDHeader) {
+		allowedHeaders += ", " + deviceHeader
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, api_key, Idempotency-Key, X-User-ID")
+		w.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 
 		if r.Method == http.MethodOptions {

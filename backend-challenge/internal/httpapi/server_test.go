@@ -68,7 +68,7 @@ func TestServer_ListProducts(t *testing.T) {
 
 	h, _ := testHandler(t, fakeCouponValidator{}, &fakeOrderStore{})
 	req := httptest.NewRequest(http.MethodGet, "/product", nil)
-	req.Header.Set("api_key", "apitest")
+	setRequiredHeaders(req)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -95,7 +95,7 @@ func TestServer_GetProduct(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/product/1", nil)
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 
@@ -109,7 +109,7 @@ func TestServer_GetProduct(t *testing.T) {
 
 	t.Run("invalid_id", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/product/abc", nil)
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 
@@ -120,7 +120,7 @@ func TestServer_GetProduct(t *testing.T) {
 
 	t.Run("not_found", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/product/9", nil)
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 
@@ -140,6 +140,20 @@ func TestServer_AuthAppliesToProductEndpoints(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestServer_DeviceIDRequired(t *testing.T) {
+	t.Parallel()
+
+	h, _ := testHandler(t, fakeCouponValidator{}, &fakeOrderStore{})
+	req := httptest.NewRequest(http.MethodGet, "/product", nil)
+	req.Header.Set("api_key", "apitest")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
@@ -179,7 +193,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 	t.Run("invalid_json", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -191,7 +205,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 	t.Run("validation_error", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[{"productId":"999","quantity":1}]}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -203,7 +217,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 	t.Run("invalid_coupon", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"couponCode":"NOPECODE","items":[{"productId":"1","quantity":1}]}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -215,7 +229,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"couponCode":"HAPPYHRS","items":[{"productId":"1","quantity":2}]}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -256,7 +270,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 
 		req := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[{"productId":"1","quantity":2}]}`))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 
@@ -270,7 +284,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 
 		req1 := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[{"productId":"1","quantity":2}]}`))
 		req1.Header.Set("Content-Type", "application/json")
-		req1.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req1)
 		req1.Header.Set("Idempotency-Key", "idem-1")
 		rec1 := httptest.NewRecorder()
 		handler.ServeHTTP(rec1, req1)
@@ -280,7 +294,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 
 		req2 := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[{"productId":"1","quantity":2}]}`))
 		req2.Header.Set("Content-Type", "application/json")
-		req2.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req2)
 		req2.Header.Set("Idempotency-Key", "idem-1")
 		rec2 := httptest.NewRecorder()
 		handler.ServeHTTP(rec2, req2)
@@ -312,7 +326,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 
 		req1 := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[{"productId":"1","quantity":2}]}`))
 		req1.Header.Set("Content-Type", "application/json")
-		req1.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req1)
 		req1.Header.Set("Idempotency-Key", "idem-2")
 		rec1 := httptest.NewRecorder()
 		handler.ServeHTTP(rec1, req1)
@@ -322,7 +336,7 @@ func TestServer_PlaceOrder(t *testing.T) {
 
 		req2 := httptest.NewRequest(http.MethodPost, "/order", bytes.NewBufferString(`{"items":[{"productId":"1","quantity":1}]}`))
 		req2.Header.Set("Content-Type", "application/json")
-		req2.Header.Set("api_key", "apitest")
+		setRequiredHeaders(req2)
 		req2.Header.Set("Idempotency-Key", "idem-2")
 		rec2 := httptest.NewRecorder()
 		handler.ServeHTTP(rec2, req2)
@@ -344,7 +358,7 @@ func TestServer_RateLimitPerUser(t *testing.T) {
 	})
 
 	req1 := httptest.NewRequest(http.MethodGet, "/product", nil)
-	req1.Header.Set("api_key", "apitest")
+	setRequiredHeaders(req1)
 	req1.Header.Set("X-User-ID", "user-a")
 	rec1 := httptest.NewRecorder()
 	handler.ServeHTTP(rec1, req1)
@@ -353,7 +367,7 @@ func TestServer_RateLimitPerUser(t *testing.T) {
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/product", nil)
-	req2.Header.Set("api_key", "apitest")
+	setRequiredHeaders(req2)
 	req2.Header.Set("X-User-ID", "user-a")
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req2)
@@ -362,7 +376,7 @@ func TestServer_RateLimitPerUser(t *testing.T) {
 	}
 
 	req3 := httptest.NewRequest(http.MethodGet, "/product", nil)
-	req3.Header.Set("api_key", "apitest")
+	setRequiredHeaders(req3)
 	req3.Header.Set("X-User-ID", "user-b")
 	rec3 := httptest.NewRecorder()
 	handler.ServeHTTP(rec3, req3)
@@ -407,4 +421,9 @@ func testCatalog(t *testing.T) *catalog.Catalog {
 		t.Fatalf("load catalog: %v", err)
 	}
 	return cat
+}
+
+func setRequiredHeaders(r *http.Request) {
+	r.Header.Set("api_key", "apitest")
+	r.Header.Set("X-Device-ID", "device-1")
 }

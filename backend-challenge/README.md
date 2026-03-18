@@ -35,11 +35,16 @@ This service provides:
 - All endpoints require `api_key` header.
 - Missing `api_key` returns `401 Unauthorized`.
 - Invalid `api_key` returns `403 Forbidden`.
-- Requests are rate-limited per user key.
+- All endpoints require `X-Device-ID` header.
+- Missing `X-Device-ID` returns `400 Bad Request`.
+- Client IP is captured from `X-Forwarded-For`, then `X-Real-IP`, then socket remote address.
+- Requests are rate-limited using user + device + IP identity.
 - User key source:
-  - `X-User-ID` header (preferred)
-  - falls back to client IP when header is missing
+  - `X-User-ID` (if present)
+  - `X-Device-ID`
+  - client IP address
 - Exceeded limit returns `429 Too Many Requests` with `Retry-After: 1`.
+- Every request is logged with method, path, status, duration, bytes, `ip`, `device_id`, and `user_id`.
 
 ### `GET /product`
 
@@ -180,6 +185,7 @@ Schema is auto-created/updated at startup.
 | `PORT` | `8080` | HTTP listen port |
 | `PRODUCTS_FILE` | `data/products.json` | Product source file |
 | `API_KEY` | `apitest` | Required `api_key` for all API requests |
+| `DEVICE_ID_HEADER` | `X-Device-ID` | Header name used to read device ID from each request |
 | `RATE_LIMIT_RPS` | `20` | Per-user sustained request rate |
 | `RATE_LIMIT_BURST` | `40` | Per-user burst capacity |
 | `RATE_LIMIT_USER_HEADER` | `X-User-ID` | Header used as user identity key |
@@ -241,6 +247,7 @@ docker run --rm -p 8080:8080 \
 curl -X POST "http://localhost:8080/order" \
   -H "Content-Type: application/json" \
   -H "api_key: apitest" \
+  -H "X-Device-ID: device-42" \
   -H "X-User-ID: user-42" \
   -H "Idempotency-Key: order-123" \
   -d '{"couponCode":"HAPPYHRS","items":[{"productId":"1","quantity":2}]}'
@@ -265,7 +272,9 @@ MYSQL_TEST_DSN='root:root@tcp(127.0.0.1:3306)/orderfood?parseTime=true&charset=u
 - API server has graceful shutdown on `SIGINT`/`SIGTERM`.
 - HTTP timeouts are configured for safer production behavior.
 - API key auth is enforced before handlers execute.
-- Per-user in-memory token bucket rate limiting mitigates abuse bursts.
+- `X-Device-ID` is required on each API request and client IP is captured per request.
+- Per-user in-memory token bucket rate limiting (user + device + IP) mitigates abuse bursts.
+- Request logging includes `ip` and `device_id` on every API call.
 - Coupon index reload is automatic when file `modTime` or size changes.
 - Product endpoints are cache-header enabled for CDN/proxy usage.
 

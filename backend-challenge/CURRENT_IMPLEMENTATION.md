@@ -10,6 +10,8 @@ This service implements the OpenAPI-backed food ordering API in Go with:
 - Order placement API
 - Global API key auth middleware
 - Per-user rate limiting middleware
+- Request logging middleware
+- Device ID and client IP capture on every API request
 - Coupon validation logic with large-file support
 - MySQL persistence for orders
 - Idempotency support for safe retries
@@ -25,6 +27,7 @@ The API layer is stateless and suitable for multi-replica deployment behind a lo
 - `internal/httpapi/server.go`: HTTP routing + request validation + response shaping
 - `internal/httpapi/security.go`: auth + rate-limit middleware
 - `internal/httpapi/ratelimit.go`: per-user token-bucket limiter
+- `internal/httpapi/logging.go`: request logging middleware
 - `internal/catalog/catalog.go`: product catalog loader + in-memory lookup
 - `internal/coupon/validator.go`: file-scanning coupon validator (fallback mode)
 - `internal/coupon/tokenize.go`: streaming tokenizer for coupon candidates
@@ -40,6 +43,7 @@ All config is loaded in `internal/app/app.go` via `ConfigFromEnv()`.
 - `PORT` (default `8080`)
 - `PRODUCTS_FILE` (default `data/products.json`)
 - `API_KEY` (default `apitest`)
+- `DEVICE_ID_HEADER` (default `X-Device-ID`)
 - `RATE_LIMIT_RPS` (default `20`)
 - `RATE_LIMIT_BURST` (default `40`)
 - `RATE_LIMIT_USER_HEADER` (default `X-User-ID`)
@@ -68,7 +72,7 @@ Implemented in `internal/httpapi/server.go`.
 Global middleware sets:
 
 - `Access-Control-Allow-Origin: *`
-- `Access-Control-Allow-Headers: Content-Type, api_key, Idempotency-Key, X-User-ID`
+- `Access-Control-Allow-Headers: Content-Type, api_key, Idempotency-Key, X-User-ID, X-Device-ID, X-Forwarded-For, X-Real-IP`
 - `Access-Control-Allow-Methods: GET,POST,OPTIONS`
 
 `OPTIONS` responds with `204 No Content`.
@@ -81,14 +85,20 @@ Auth middleware:
 - Reads `api_key` header
 - Missing `api_key` -> `401 Unauthorized`
 - Wrong `api_key` -> `403 Forbidden`
+- Requires `X-Device-ID` header on all API calls
+- Missing device ID -> `400 Bad Request`
 
 Rate limiting middleware:
 
 - Token-bucket limiter with per-user buckets
-- User key from `X-User-ID` by default (`RATE_LIMIT_USER_HEADER`)
-- Falls back to remote IP when user header is missing
+- User key combines user (`X-User-ID`), device (`X-Device-ID`), and client IP
+- Client IP is resolved from `X-Forwarded-For`, then `X-Real-IP`, then remote socket address
 - Limit exceeded -> `429 Too Many Requests` + `Retry-After: 1`
 - Response includes `X-RateLimit-Limit` and `X-RateLimit-Burst` when limiter is enabled
+
+Request logging:
+
+- Logs every API request with method, path, status, bytes, duration, `ip`, `device_id`, and `user_id`
 
 ### 4.3 GET /product
 
