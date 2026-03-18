@@ -24,18 +24,22 @@ This service provides:
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/health` | Liveness/health endpoint |
 | `GET` | `/product` | Returns all products |
 | `GET` | `/product/{productId}` | Returns one product by ID |
 | `POST` | `/order` | Validates and places order |
+| `GET` | `/openapi.yaml` | Serves OpenAPI spec (non-prod only) |
+| `GET` | `/swagger` | Swagger UI redirect (non-prod only) |
+| `GET` | `/swagger/index.html` | Swagger UI page (non-prod only) |
 
 ## Request/Response Behavior
 
 ### Global auth + rate limiting
 
-- All endpoints require `api_key` header.
+- Business endpoints require `api_key` header (`/product`, `/product/{productId}`, `/order`).
 - Missing `api_key` returns `401 Unauthorized`.
 - Invalid `api_key` returns `403 Forbidden`.
-- All endpoints require `X-Device-ID` header.
+- Business endpoints require `X-Device-ID` header.
 - Missing `X-Device-ID` returns `400 Bad Request`.
 - Client IP is captured from `X-Forwarded-For`, then `X-Real-IP`, then socket remote address.
 - Requests are rate-limited using user + device + IP identity.
@@ -45,6 +49,23 @@ This service provides:
   - client IP address
 - Exceeded limit returns `429 Too Many Requests` with `Retry-After: 1`.
 - Every request is logged with method, path, status, duration, bytes, `ip`, `device_id`, and `user_id`.
+- Public endpoints:
+  - `GET /health` (no auth/device required)
+  - Swagger endpoints in non-prod mode (no auth/device required)
+
+### `GET /health`
+
+- Public endpoint for probes.
+- Returns `200 OK` with status, environment, uptime, and timestamp.
+
+### Swagger (non-prod only)
+
+- Enabled by default when `APP_ENV` is not `prod`/`production`.
+- Disabled by default in production.
+- Endpoints:
+  - `GET /openapi.yaml`
+  - `GET /swagger` (redirects to `/swagger/index.html`)
+  - `GET /swagger/index.html`
 
 ### `GET /product`
 
@@ -184,6 +205,9 @@ Schema is auto-created/updated at startup.
 |---|---|---|
 | `PORT` | `8080` | HTTP listen port |
 | `PRODUCTS_FILE` | `data/products.json` | Product source file |
+| `APP_ENV` | `development` | Deployment environment (`production` disables Swagger by default) |
+| `ENABLE_SWAGGER` | `true` in non-prod, `false` in prod | Explicit Swagger enable/disable override |
+| `OPENAPI_FILE` | `data/openapi.yaml` | OpenAPI file path served by Swagger endpoints |
 | `API_KEY` | `apitest` | Required `api_key` for all API requests |
 | `DEVICE_ID_HEADER` | `X-Device-ID` | Header name used to read device ID from each request |
 | `RATE_LIMIT_RPS` | `20` | Per-user sustained request rate |
@@ -252,6 +276,16 @@ curl -X POST "http://localhost:8080/order" \
   -H "Idempotency-Key: order-123" \
   -d '{"couponCode":"HAPPYHRS","items":[{"productId":"1","quantity":2}]}'
 ```
+
+### 6. Health and Swagger
+
+```bash
+curl http://localhost:8080/health
+```
+
+In non-production (`APP_ENV=development` by default), open:
+
+- `http://localhost:8080/swagger/index.html`
 
 ## Development and Testing
 
