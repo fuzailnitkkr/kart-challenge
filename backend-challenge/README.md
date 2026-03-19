@@ -109,24 +109,65 @@ Normalization applied before check:
 - Every item must have `quantity > 0`.
 - All `productId` values must exist in the product catalog.
 
-## Architecture
+## AWS Infrastructure Diagram
 
 ```mermaid
-graph TD
-  C[Client] --> LB[Load Balancer]
-  LB --> A1[API Replica 1]
-  LB --> A2[API Replica 2]
-  LB --> A3[API Replica N]
-  A1 --> CAT[(In-memory Catalog)]
-  A2 --> CAT
-  A3 --> CAT
-  A1 --> IDX[(In-memory Coupon Index)]
-  A2 --> IDX
-  A3 --> IDX
-  A1 --> DB[(MySQL)]
-  A2 --> DB
-  A3 --> DB
-  IDX <-->|hot-reload file watcher| IF[(coupons.idx)]
+flowchart LR
+  U["Users (Web/Mobile)"] --> R53["Route 53"]
+  R53 --> CF["CloudFront + AWS WAF + AWS Shield"]
+  CF -->|"/"| S3FE["S3 (React Frontend Static Hosting)"]
+  CF -->|"/api/*"| ALB["Application Load Balancer"]
+
+  subgraph VPC["VPC (Multi-AZ)"]
+    subgraph Public["Public Subnets"]
+      ALB
+    end
+
+    subgraph App["Private App Subnets"]
+      API1["ECS Fargate Service (Go API - Replica 1)"]
+      APIN["ECS Fargate Service (Go API - Replica N)"]
+      WORKER["ECS Worker (Optional Async Order Ingestion)"]
+    end
+
+    subgraph Data["Private Data Subnets"]
+      RDS["Amazon RDS MySQL (Multi-AZ)"]
+      REDIS["ElastiCache Redis (Distributed Rate Limit / Hot Cache)"]
+      EFS["Amazon EFS (Shared coupons.idx)"]
+    end
+  end
+
+  ALB --> API1
+  ALB --> APIN
+
+  API1 --> RDS
+  APIN --> RDS
+
+  API1 --> REDIS
+  APIN --> REDIS
+
+  API1 --> EFS
+  APIN --> EFS
+
+  S3COUPON["S3 (couponbase files + coupons.idx)"] --> EFS
+  BUILDER["CodeBuild / Batch Job (Coupon Index Builder)"] --> S3COUPON
+  BUILDER --> EFS
+
+  API1 -. "optional" .-> SQS["SQS (Order Queue)"]
+  APIN -. "optional" .-> SQS
+  WORKER -.-> SQS
+  WORKER --> RDS
+
+  SECRETS["AWS Secrets Manager"] --> API1
+  SECRETS --> APIN
+  SECRETS --> WORKER
+
+  CW["CloudWatch Logs + Metrics + Alarms"]:::obs
+  API1 --> CW
+  APIN --> CW
+  ALB --> CW
+  RDS --> CW
+
+  classDef obs fill:#eef7ff,stroke:#4c78a8,stroke-width:1px;
 ```
 
 ## Coupon Validation at Large Scale
