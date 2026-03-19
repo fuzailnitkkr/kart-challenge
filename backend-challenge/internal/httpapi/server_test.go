@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -295,6 +296,15 @@ func TestServer_PlaceOrder(t *testing.T) {
 		if rec.Code != http.StatusUnprocessableEntity {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
 		}
+
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode error response: %v", err)
+		}
+		message, _ := out["error"].(string)
+		if strings.TrimSpace(message) == "" {
+			t.Fatalf("expected non-empty error message, got %q", rec.Body.String())
+		}
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -413,6 +423,131 @@ func TestServer_PlaceOrder(t *testing.T) {
 		handler.ServeHTTP(rec2, req2)
 		if rec2.Code != http.StatusConflict {
 			t.Fatalf("second status = %d, want %d", rec2.Code, http.StatusConflict)
+		}
+	})
+}
+
+func TestServer_ValidateCoupon(t *testing.T) {
+	t.Parallel()
+
+	handler, _ := testHandler(t, fakeCouponValidator{
+		valid: map[string]bool{
+			"HAPPYHRS": true,
+		},
+	}, &fakeOrderStore{})
+
+	t.Run("missing_api_key", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":"HAPPYHRS"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("missing_device_id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":"HAPPYHRS"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("api_key", "apitest")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("invalid_json", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":`))
+		req.Header.Set("Content-Type", "application/json")
+		setRequiredHeaders(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("empty_coupon", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":"   "}`))
+		req.Header.Set("Content-Type", "application/json")
+		setRequiredHeaders(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("invalid_coupon", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":"badcode"}`))
+		req.Header.Set("Content-Type", "application/json")
+		setRequiredHeaders(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+		}
+
+		var out couponValidateResp
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if out.Valid {
+			t.Fatalf("valid = %v, want false", out.Valid)
+		}
+		if out.CouponCode != "BADCODE" {
+			t.Fatalf("couponCode = %q, want BADCODE", out.CouponCode)
+		}
+		if strings.TrimSpace(out.Message) == "" {
+			t.Fatalf("expected non-empty message")
+		}
+	})
+
+	t.Run("success", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":"happyhrs"}`))
+		req.Header.Set("Content-Type", "application/json")
+		setRequiredHeaders(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+		}
+
+		var out couponValidateResp
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if !out.Valid {
+			t.Fatalf("valid = %v, want true", out.Valid)
+		}
+		if out.CouponCode != "HAPPYHRS" {
+			t.Fatalf("couponCode = %q, want HAPPYHRS", out.CouponCode)
+		}
+		if strings.TrimSpace(out.Message) == "" {
+			t.Fatalf("expected non-empty message")
+		}
+	})
+
+	t.Run("validator_error", func(t *testing.T) {
+		handler, _ := testHandler(t, fakeCouponValidator{
+			err: errors.New("validator down"),
+		}, &fakeOrderStore{})
+
+		req := httptest.NewRequest(http.MethodPost, "/coupon/validate", bytes.NewBufferString(`{"couponCode":"HAPPYHRS"}`))
+		req.Header.Set("Content-Type", "application/json")
+		setRequiredHeaders(req)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 		}
 	})
 }

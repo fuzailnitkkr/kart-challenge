@@ -16,6 +16,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 
+ARG DESCRIPTION="Build a mini food ordering app"
+LABEL org.opencontainers.image.description="${DESCRIPTION}"
+
 COPY --from=builder /out/api /app/api
 COPY --from=builder /src/data /app/data
 

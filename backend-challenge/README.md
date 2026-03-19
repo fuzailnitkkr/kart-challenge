@@ -248,7 +248,27 @@ cd /Users/fuzail/Documents/workspace/kart-challenge/backend-challenge
 go run ./cmd/api
 ```
 
-### 4. Run with Docker
+### 4. Run with Docker Compose (separate MySQL + API containers)
+
+```bash
+cd /Users/fuzail/Documents/workspace/kart-challenge/backend-challenge
+docker-compose up --build -d
+```
+
+Check status/logs:
+
+```bash
+docker-compose ps
+docker-compose logs -f app
+```
+
+Stop:
+
+```bash
+docker-compose down
+```
+
+### 5. Run with Docker (API container only)
 
 Build image:
 
@@ -265,7 +285,7 @@ docker run --rm -p 8080:8080 \
   orderfood-api
 ```
 
-### 5. Place an order
+### 6. Place an order
 
 ```bash
 curl -X POST "http://localhost:8080/order" \
@@ -277,7 +297,7 @@ curl -X POST "http://localhost:8080/order" \
   -d '{"couponCode":"HAPPYHRS","items":[{"productId":"1","quantity":2}]}'
 ```
 
-### 6. Health and Swagger
+### 7. Health and Swagger
 
 ```bash
 curl http://localhost:8080/health
