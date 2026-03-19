@@ -39,11 +39,11 @@ func withAuthAndRateLimit(next http.Handler, cfg AuthAndRateLimitConfig) http.Ha
 		if expectedAPIKey != "" {
 			provided := strings.TrimSpace(r.Header.Get("api_key"))
 			if provided == "" {
-				w.WriteHeader(http.StatusUnauthorized)
+				writeError(w, http.StatusUnauthorized, "missing api_key header")
 				return
 			}
 			if !matchAPIKey(provided, expectedAPIKey) {
-				w.WriteHeader(http.StatusForbidden)
+				writeError(w, http.StatusForbidden, "invalid api_key")
 				return
 			}
 		}
@@ -51,7 +51,7 @@ func withAuthAndRateLimit(next http.Handler, cfg AuthAndRateLimitConfig) http.Ha
 		userID := requestUserID(r, userHeader)
 		deviceID := requestDeviceID(r, deviceHeader)
 		if cfg.RequireDevice && deviceID == "" {
-			w.WriteHeader(http.StatusBadRequest)
+			writeError(w, http.StatusBadRequest, "missing device id header")
 			return
 		}
 		clientIP := requestClientIP(r)
@@ -70,7 +70,7 @@ func withAuthAndRateLimit(next http.Handler, cfg AuthAndRateLimitConfig) http.Ha
 			userKey := buildRateLimitKey(userID, deviceID, clientIP)
 			if !cfg.RateLimiter.Allow(userKey) {
 				w.Header().Set("Retry-After", "1")
-				w.WriteHeader(http.StatusTooManyRequests)
+				writeError(w, http.StatusTooManyRequests, "rate limit exceeded, retry later")
 				return
 			}
 		}
