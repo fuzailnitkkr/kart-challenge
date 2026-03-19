@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -141,6 +142,15 @@ func BuildRuntime(cfg Config) (*Runtime, error) {
 	}
 	orderCloser := io.Closer(orderStore)
 
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := orderStore.UpsertProducts(seedCtx, cat.List()); err != nil {
+		seedCancel()
+		_ = closer.Close()
+		_ = orderCloser.Close()
+		return nil, fmt.Errorf("seed products in mysql: %w", err)
+	}
+	seedCancel()
+
 	var openAPISpec []byte
 	if cfg.EnableSwagger {
 		openAPISpec, err = os.ReadFile(cfg.OpenAPIFile)
@@ -153,6 +163,7 @@ func BuildRuntime(cfg Config) (*Runtime, error) {
 
 	srv := httpapi.New(httpapi.Config{
 		Catalog:         cat,
+		ProductReader:   orderStore,
 		CouponValidator: validator,
 		OrderStore:      orderStore,
 		APIKey:          cfg.APIKey,
@@ -222,6 +233,9 @@ func resolveCouponFiles(paths []string) ([]string, error) {
 			if fileExists(path) {
 				out = append(out, path)
 			}
+		}
+		if len(out) == 0 {
+			return nil, errors.New("no default coupon files found; configure COUPON_FILES or COUPON_INDEX_FILE")
 		}
 		return out, nil
 	}
@@ -328,6 +342,9 @@ func (noopCloser) Close() error {
 }
 
 var defaultCouponFiles = []string{
+	filepath.Join("data", "couponbase1.txt"),
+	filepath.Join("data", "couponbase2.txt"),
+	filepath.Join("data", "couponbase3.txt"),
 	"couponbase1.gz",
 	"couponbase2.gz",
 	"couponbase3.gz",

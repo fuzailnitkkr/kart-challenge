@@ -33,6 +33,12 @@ services:
       PORT: 8080
       API_KEY: apitest
       MYSQL_DSN: root:root@tcp(mysql:3306)/orderfood?parseTime=true&charset=utf8mb4,utf8
+      COUPON_FILES: /app/data/couponbase1.txt,/app/data/couponbase2.txt,/app/data/couponbase3.txt
+      # Optional indexed mode (supports hot-reload without app restart):
+      # COUPON_INDEX_FILE: /app/data/coupons.idx
+      # COUPON_INDEX_RELOAD_INTERVAL: 5s
+    volumes:
+      - ./data:/app/data
     ports:
       - "8080:8080"
     restart: unless-stopped

@@ -35,6 +35,31 @@ type fakeOrderStore struct {
 	byKey   map[string]order.Record
 }
 
+type fakeProductReader struct {
+	list    []catalog.Product
+	getByID map[string]catalog.Product
+	listErr error
+	getErr  error
+}
+
+func (f fakeProductReader) ListProducts(_ context.Context) ([]catalog.Product, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+
+	out := make([]catalog.Product, len(f.list))
+	copy(out, f.list)
+	return out, nil
+}
+
+func (f fakeProductReader) GetProductByID(_ context.Context, id string) (catalog.Product, bool, error) {
+	if f.getErr != nil {
+		return catalog.Product{}, false, f.getErr
+	}
+	p, ok := f.getByID[id]
+	return p, ok, nil
+}
+
 func (f *fakeOrderStore) Create(_ context.Context, record order.Record) error {
 	if f.err != nil {
 		return f.err
@@ -86,6 +111,70 @@ func TestServer_ListProducts(t *testing.T) {
 	}
 	if len(products) != 2 {
 		t.Fatalf("len(products) = %d, want 2", len(products))
+	}
+}
+
+func TestServer_ListProducts_FromProductReader(t *testing.T) {
+	t.Parallel()
+
+	cat := testCatalog(t)
+	reader := fakeProductReader{
+		list: []catalog.Product{
+			{ID: "9", Name: "Donut", Category: "Dessert", Price: 5.25},
+		},
+		getByID: map[string]catalog.Product{
+			"9": {ID: "9", Name: "Donut", Category: "Dessert", Price: 5.25},
+		},
+	}
+
+	server := New(Config{
+		Catalog:         cat,
+		ProductReader:   reader,
+		CouponValidator: fakeCouponValidator{},
+		OrderStore:      &fakeOrderStore{},
+		APIKey:          "apitest",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/product", nil)
+	setRequiredHeaders(req)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var products []catalog.Product
+	if err := json.Unmarshal(rec.Body.Bytes(), &products); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(products) != 1 {
+		t.Fatalf("len(products) = %d, want 1", len(products))
+	}
+	if products[0].ID != "9" {
+		t.Fatalf("product id = %q, want 9", products[0].ID)
+	}
+}
+
+func TestServer_ListProducts_ProductReaderError(t *testing.T) {
+	t.Parallel()
+
+	cat := testCatalog(t)
+	server := New(Config{
+		Catalog:         cat,
+		ProductReader:   fakeProductReader{listErr: errors.New("db down")},
+		CouponValidator: fakeCouponValidator{},
+		OrderStore:      &fakeOrderStore{},
+		APIKey:          "apitest",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/product", nil)
+	setRequiredHeaders(req)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
 
@@ -200,6 +289,45 @@ func TestServer_GetProduct(t *testing.T) {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
 		}
 	})
+}
+
+func TestServer_GetProduct_FromProductReader(t *testing.T) {
+	t.Parallel()
+
+	cat := testCatalog(t)
+	reader := fakeProductReader{
+		list: []catalog.Product{
+			{ID: "9", Name: "Donut", Category: "Dessert", Price: 5.25},
+		},
+		getByID: map[string]catalog.Product{
+			"9": {ID: "9", Name: "Donut", Category: "Dessert", Price: 5.25},
+		},
+	}
+
+	server := New(Config{
+		Catalog:         cat,
+		ProductReader:   reader,
+		CouponValidator: fakeCouponValidator{},
+		OrderStore:      &fakeOrderStore{},
+		APIKey:          "apitest",
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/product/9", nil)
+	setRequiredHeaders(req)
+	rec := httptest.NewRecorder()
+	server.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var out catalog.Product
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.ID != "9" {
+		t.Fatalf("id = %q, want 9", out.ID)
+	}
 }
 
 func TestServer_AuthAppliesToProductEndpoints(t *testing.T) {
