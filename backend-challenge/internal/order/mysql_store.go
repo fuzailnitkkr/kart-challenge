@@ -9,6 +9,7 @@ import (
 	"time"
 
 	mysql "github.com/go-sql-driver/mysql"
+	"github.com/oolio-group/kart-challenge/backend-challenge/internal/catalog"
 )
 
 const (
@@ -219,6 +220,143 @@ func (s *MySQLStore) create(ctx context.Context, record Record) error {
 	return nil
 }
 
+// UpsertProducts persists product catalog rows into MySQL.
+func (s *MySQLStore) UpsertProducts(ctx context.Context, products []catalog.Product) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("mysql store is not initialized")
+	}
+	if len(products) == 0 {
+		return nil
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin product tx: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO products (
+			id, name, price, category, image_thumbnail, image_mobile, image_tablet, image_desktop
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE
+			name = VALUES(name),
+			price = VALUES(price),
+			category = VALUES(category),
+			image_thumbnail = VALUES(image_thumbnail),
+			image_mobile = VALUES(image_mobile),
+			image_tablet = VALUES(image_tablet),
+			image_desktop = VALUES(image_desktop),
+			updated_at = CURRENT_TIMESTAMP(6)
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare product upsert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, p := range products {
+		id := strings.TrimSpace(p.ID)
+		name := strings.TrimSpace(p.Name)
+		category := strings.TrimSpace(p.Category)
+		if id == "" || name == "" || category == "" {
+			return fmt.Errorf("invalid product row")
+		}
+
+		var thumbnail, mobile, tablet, desktop string
+		if p.Image != nil {
+			thumbnail = strings.TrimSpace(p.Image.Thumbnail)
+			mobile = strings.TrimSpace(p.Image.Mobile)
+			tablet = strings.TrimSpace(p.Image.Tablet)
+			desktop = strings.TrimSpace(p.Image.Desktop)
+		}
+
+		if _, err := stmt.ExecContext(
+			ctx,
+			id,
+			name,
+			p.Price,
+			category,
+			nullIfEmpty(thumbnail),
+			nullIfEmpty(mobile),
+			nullIfEmpty(tablet),
+			nullIfEmpty(desktop),
+		); err != nil {
+			return fmt.Errorf("upsert product row: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit product tx: %w", err)
+	}
+
+	return nil
+}
+
+// ListProducts returns all products from MySQL.
+func (s *MySQLStore) ListProducts(ctx context.Context) ([]catalog.Product, error) {
+	if s == nil || s.db == nil {
+		return nil, fmt.Errorf("mysql store is not initialized")
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT id, name, price, category, image_thumbnail, image_mobile, image_tablet, image_desktop
+		 FROM products
+		 ORDER BY CAST(id AS UNSIGNED), id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query products: %w", err)
+	}
+	defer rows.Close()
+
+	products := make([]catalog.Product, 0, 32)
+	for rows.Next() {
+		product, err := scanProduct(rows)
+		if err != nil {
+			return nil, err
+		}
+		products = append(products, product)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate products: %w", err)
+	}
+
+	return products, nil
+}
+
+// GetProductByID returns one product from MySQL.
+func (s *MySQLStore) GetProductByID(ctx context.Context, id string) (catalog.Product, bool, error) {
+	if s == nil || s.db == nil {
+		return catalog.Product{}, false, fmt.Errorf("mysql store is not initialized")
+	}
+
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return catalog.Product{}, false, nil
+	}
+
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT id, name, price, category, image_thumbnail, image_mobile, image_tablet, image_desktop
+		 FROM products
+		 WHERE id = ?
+		 LIMIT 1`,
+		id,
+	)
+
+	product, err := scanProduct(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return catalog.Product{}, false, nil
+		}
+		return catalog.Product{}, false, err
+	}
+	return product, true, nil
+}
+
 func applyPoolDefaults(db *sql.DB, opts MySQLStoreOptions) {
 	maxOpen := opts.MaxOpenConns
 	if maxOpen <= 0 {
@@ -254,6 +392,19 @@ func applyPoolDefaults(db *sql.DB, opts MySQLStoreOptions) {
 
 func migrateMySQL(ctx context.Context, db *sql.DB) error {
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS products (
+			id VARCHAR(64) NOT NULL,
+			name VARCHAR(255) NOT NULL,
+			price DECIMAL(10,2) NOT NULL,
+			category VARCHAR(128) NOT NULL,
+			image_thumbnail TEXT NULL,
+			image_mobile TEXT NULL,
+			image_tablet TEXT NULL,
+			image_desktop TEXT NULL,
+			created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+			updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+			PRIMARY KEY (id)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 		`CREATE TABLE IF NOT EXISTS orders (
 			id VARCHAR(64) NOT NULL,
 			coupon_code VARCHAR(32) NULL,
@@ -314,4 +465,42 @@ func nullIfEmpty(v string) any {
 		return nil
 	}
 	return v
+}
+
+type sqlProductScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanProduct(scanner sqlProductScanner) (catalog.Product, error) {
+	var (
+		p         catalog.Product
+		thumbnail sql.NullString
+		mobile    sql.NullString
+		tablet    sql.NullString
+		desktop   sql.NullString
+	)
+
+	if err := scanner.Scan(
+		&p.ID,
+		&p.Name,
+		&p.Price,
+		&p.Category,
+		&thumbnail,
+		&mobile,
+		&tablet,
+		&desktop,
+	); err != nil {
+		return catalog.Product{}, err
+	}
+
+	if thumbnail.Valid || mobile.Valid || tablet.Valid || desktop.Valid {
+		p.Image = &catalog.Image{
+			Thumbnail: thumbnail.String,
+			Mobile:    mobile.String,
+			Tablet:    tablet.String,
+			Desktop:   desktop.String,
+		}
+	}
+
+	return p, nil
 }

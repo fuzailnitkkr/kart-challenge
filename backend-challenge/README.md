@@ -181,14 +181,24 @@ The runtime supports two coupon modes.
 - Avoids scanning multi-GB files per request.
 - Supports hot reload when index file changes.
 
-Build index from large files:
+Copy coupon source files into `data/` first:
 
 ```bash
+cd /Users/fuzail/Documents/workspace/kart-challenge/backend-challenge
+cp /Users/fuzail/Downloads/couponbase1.txt data/couponbase1.txt
+cp /Users/fuzail/Downloads/couponbase2.txt data/couponbase2.txt
+cp /Users/fuzail/Downloads/couponbase3.txt data/couponbase3.txt
+```
+
+Build index from files in `data/`:
+
+```bash
+cd /Users/fuzail/Documents/workspace/kart-challenge/backend-challenge
 go run ./cmd/couponindex \
   -out data/coupons.idx \
-  /Users/fuzail/Downloads/couponbase1.txt \
-  /Users/fuzail/Downloads/couponbase2.txt \
-  /Users/fuzail/Downloads/couponbase3.txt
+  data/couponbase1.txt \
+  data/couponbase2.txt \
+  data/couponbase3.txt
 ```
 
 Run API with index:
@@ -221,24 +231,85 @@ Order persistence uses transactional writes:
 
 Schema is auto-created/updated at startup.
 
-### Tables
+### MySQL ER Diagram
 
-`orders`
+```mermaid
+erDiagram
+  PRODUCTS {
+    VARCHAR_64 id PK
+    VARCHAR_255 name
+    DECIMAL_10_2 price
+    VARCHAR_128 category
+    TEXT image_thumbnail
+    TEXT image_mobile
+    TEXT image_tablet
+    TEXT image_desktop
+    DATETIME_6 created_at
+    DATETIME_6 updated_at
+  }
 
-- `id` (`VARCHAR(64)`) primary key
-- `coupon_code` (`VARCHAR(32)`) nullable
-- `created_at` (`DATETIME(6)`)
-- `idempotency_key` (`VARCHAR(128)`) nullable unique
-- `request_hash` (`CHAR(64)`) nullable
+  ORDERS {
+    VARCHAR_64 id PK
+    VARCHAR_32 coupon_code
+    DATETIME_6 created_at
+    VARCHAR_128 idempotency_key UK
+    CHAR_64 request_hash
+  }
 
-`order_items`
+  ORDER_ITEMS {
+    BIGINT id PK
+    VARCHAR_64 order_id FK
+    VARCHAR_64 product_id
+    INT quantity
+    INT position
+    DATETIME_6 created_at
+  }
 
-- `id` (`BIGINT UNSIGNED`) primary key auto-increment
-- `order_id` (`VARCHAR(64)`) FK -> `orders.id`
-- `product_id` (`VARCHAR(64)`)
-- `quantity` (`INT`)
-- `position` (`INT`)
-- `created_at` (`DATETIME(6)`)
+  ORDERS ||--o{ ORDER_ITEMS : has_many
+  PRODUCTS ||..o{ ORDER_ITEMS : logical_product_link
+```
+
+Notes:
+- `ORDER_ITEMS.order_id -> ORDERS.id` is a real foreign key (`ON DELETE CASCADE`).
+- `ORDER_ITEMS.product_id -> PRODUCTS.id` is a logical relation in application code (not a DB foreign key).
+
+### Column Purpose (Why Each Column Exists)
+
+#### `products`
+
+| Column | Why required |
+|---|---|
+| `id` | Stable product identity used by APIs and order items. |
+| `name` | Product display name in catalog and order responses. |
+| `price` | Source-of-truth price used in order/cart behavior. |
+| `category` | Product grouping and UI categorization. |
+| `image_thumbnail` | Lightweight image URL for compact views. |
+| `image_mobile` | Mobile-specific image URL for responsive UI. |
+| `image_tablet` | Tablet-specific image URL for responsive UI. |
+| `image_desktop` | Desktop-specific image URL for responsive UI. |
+| `created_at` | Audit field for initial insert time. |
+| `updated_at` | Audit field for latest product update time. |
+
+#### `orders`
+
+| Column | Why required |
+|---|---|
+| `id` | Unique order identifier returned to clients. |
+| `coupon_code` | Persists applied coupon (if any) for audit and support. |
+| `created_at` | Canonical order creation time for operations/analytics. |
+| `idempotency_key` | Enables safe retry semantics across replicas. |
+| `request_hash` | Detects conflicting payloads with same idempotency key. |
+
+#### `order_items`
+
+| Column | Why required |
+|---|---|
+| `id` | Internal unique row identifier for each line item. |
+| `order_id` | Links line items to parent order. |
+| `product_id` | Identifies purchased product in each line item. |
+| `quantity` | Captures requested quantity per product. |
+| `position` | Preserves original item ordering from request. |
+| `created_at` | Audit field for line-item creation time. |
 
 ## Configuration
 

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,6 +22,7 @@ import (
 // Config configures HTTP API dependencies.
 type Config struct {
 	Catalog         *catalog.Catalog
+	ProductReader   ProductReader
 	CouponValidator coupon.Validator
 	OrderStore      order.Store
 	APIKey          string
@@ -34,6 +36,7 @@ type Config struct {
 // Server exposes handlers for the OpenAPI contract.
 type Server struct {
 	catalog         *catalog.Catalog
+	productReader   ProductReader
 	couponValidator coupon.Validator
 	orderStore      order.Store
 	apiKey          string
@@ -44,6 +47,12 @@ type Server struct {
 	enableSwagger   bool
 	openAPISpec     []byte
 	startedAt       time.Time
+}
+
+// ProductReader retrieves product data from the backing store.
+type ProductReader interface {
+	ListProducts(ctx context.Context) ([]catalog.Product, error)
+	GetProductByID(ctx context.Context, id string) (catalog.Product, bool, error)
 }
 
 // New constructs an API server.
@@ -69,6 +78,7 @@ func New(cfg Config) *Server {
 
 	return &Server{
 		catalog:         cfg.Catalog,
+		productReader:   cfg.ProductReader,
 		couponValidator: cfg.CouponValidator,
 		orderStore:      cfg.OrderStore,
 		apiKey:          cfg.APIKey,
@@ -159,9 +169,15 @@ type apiErrorResp struct {
 	Error string `json:"error"`
 }
 
-func (s *Server) handleListProducts(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleListProducts(w http.ResponseWriter, r *http.Request) {
+	products, err := s.listProducts(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load products")
+		return
+	}
+
 	setProductCacheHeaders(w)
-	writeJSON(w, http.StatusOK, s.catalog.List())
+	writeJSON(w, http.StatusOK, products)
 }
 
 func (s *Server) handleGetProduct(w http.ResponseWriter, r *http.Request) {
@@ -173,7 +189,11 @@ func (s *Server) handleGetProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := strconv.FormatInt(idNum, 10)
-	product, ok := s.catalog.GetByID(id)
+	product, ok, err := s.lookupProduct(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load product")
+		return
+	}
 	if !ok {
 		writeError(w, http.StatusNotFound, "product not found")
 		return
@@ -210,7 +230,11 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		product, ok := s.catalog.GetByID(item.ProductID)
+		product, ok, err := s.lookupProduct(r.Context(), item.ProductID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load product")
+			return
+		}
 		if !ok {
 			writeError(w, http.StatusUnprocessableEntity, fmt.Sprintf("productId %q not found", item.ProductID))
 			return
@@ -272,8 +296,8 @@ func (s *Server) handlePlaceOrder(w http.ResponseWriter, r *http.Request) {
 						})
 					}
 
-					storedProducts, ok := s.productsForOrderItems(stored.Items)
-					if !ok {
+					storedProducts, err := s.productsForOrderItems(r.Context(), stored.Items)
+					if err != nil {
 						writeError(w, http.StatusInternalServerError, "failed to resolve products for stored order")
 						return
 					}
@@ -465,16 +489,40 @@ func hashOrderRequest(req orderReq) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) productsForOrderItems(items []order.Item) ([]catalog.Product, bool) {
+func (s *Server) productsForOrderItems(ctx context.Context, items []order.Item) ([]catalog.Product, error) {
 	out := make([]catalog.Product, 0, len(items))
 	for _, item := range items {
-		product, ok := s.catalog.GetByID(item.ProductID)
+		product, ok, err := s.lookupProduct(ctx, item.ProductID)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
-			return nil, false
+			return nil, fmt.Errorf("product %s not found", item.ProductID)
 		}
 		out = append(out, product)
 	}
-	return out, true
+	return out, nil
+}
+
+func (s *Server) listProducts(ctx context.Context) ([]catalog.Product, error) {
+	if s.productReader != nil {
+		return s.productReader.ListProducts(ctx)
+	}
+	if s.catalog == nil {
+		return nil, errors.New("product source is not configured")
+	}
+	return s.catalog.List(), nil
+}
+
+func (s *Server) lookupProduct(ctx context.Context, id string) (catalog.Product, bool, error) {
+	if s.productReader != nil {
+		return s.productReader.GetProductByID(ctx, id)
+	}
+	if s.catalog == nil {
+		return catalog.Product{}, false, errors.New("product source is not configured")
+	}
+	product, ok := s.catalog.GetByID(id)
+	return product, ok, nil
 }
 
 func randomID() string {
