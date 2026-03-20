@@ -181,14 +181,24 @@ The runtime supports two coupon modes.
 - Avoids scanning multi-GB files per request.
 - Supports hot reload when index file changes.
 
-Build index from large files:
+Copy coupon source files into `data/` first:
 
 ```bash
+cd /Users/fuzail/Documents/workspace/kart-challenge/backend-challenge
+cp /Users/fuzail/Downloads/couponbase1.txt data/couponbase1.txt
+cp /Users/fuzail/Downloads/couponbase2.txt data/couponbase2.txt
+cp /Users/fuzail/Downloads/couponbase3.txt data/couponbase3.txt
+```
+
+Build index from files in `data/`:
+
+```bash
+cd /Users/fuzail/Documents/workspace/kart-challenge/backend-challenge
 go run ./cmd/couponindex \
   -out data/coupons.idx \
-  /Users/fuzail/Downloads/couponbase1.txt \
-  /Users/fuzail/Downloads/couponbase2.txt \
-  /Users/fuzail/Downloads/couponbase3.txt
+  data/couponbase1.txt \
+  data/couponbase2.txt \
+  data/couponbase3.txt
 ```
 
 Run API with index:
